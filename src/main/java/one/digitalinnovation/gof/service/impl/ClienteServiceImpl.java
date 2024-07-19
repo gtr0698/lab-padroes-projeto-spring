@@ -1,14 +1,19 @@
 package one.digitalinnovation.gof.service.impl;
 
+import java.util.List;
 import java.util.Optional;
 
+import one.digitalinnovation.gof.dto.CreateClienteRequestDto;
+import one.digitalinnovation.gof.dto.UpdateClienteRequestDto;
+import one.digitalinnovation.gof.exception.ExceptionMsg;
+import one.digitalinnovation.gof.service.ValidacaoCliente;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import one.digitalinnovation.gof.model.Cliente;
-import one.digitalinnovation.gof.model.ClienteRepository;
+import one.digitalinnovation.gof.repository.ClienteRepository;
 import one.digitalinnovation.gof.model.Endereco;
-import one.digitalinnovation.gof.model.EnderecoRepository;
+import one.digitalinnovation.gof.repository.EnderecoRepository;
 import one.digitalinnovation.gof.service.ClienteService;
 import one.digitalinnovation.gof.service.ViaCepService;
 
@@ -22,62 +27,74 @@ import one.digitalinnovation.gof.service.ViaCepService;
 @Service
 public class ClienteServiceImpl implements ClienteService {
 
-	// Singleton: Injetar os componentes do Spring com @Autowired.
 	@Autowired
 	private ClienteRepository clienteRepository;
 	@Autowired
 	private EnderecoRepository enderecoRepository;
 	@Autowired
 	private ViaCepService viaCepService;
-	
-	// Strategy: Implementar os métodos definidos na interface.
-	// Facade: Abstrair integrações com subsistemas, provendo uma interface simples.
+
+	private List<ValidacaoCliente> validacoes;
+
+	@Autowired
+	public ClienteServiceImpl(List<ValidacaoCliente> validacoes) {
+		this.validacoes = validacoes;
+	}
 
 	@Override
-	public Iterable<Cliente> buscarTodos() {
-		// Buscar todos os Clientes.
+	public List<Cliente> buscarTodos() {
 		return clienteRepository.findAll();
 	}
 
 	@Override
-	public Cliente buscarPorId(Long id) {
-		// Buscar Cliente por ID.
-		Optional<Cliente> cliente = clienteRepository.findById(id);
-		return cliente.get();
+	public Optional<Cliente> buscarPorId(Long id) {
+		return clienteRepository.findById(id);
 	}
 
 	@Override
-	public void inserir(Cliente cliente) {
-		salvarClienteComCep(cliente);
+	public Cliente inserir(CreateClienteRequestDto clienteDto) {
+		Cliente novoCliente = clienteDto.convertToModel();
+		validarCliente(novoCliente);
+		return salvarClienteComCep(novoCliente);
 	}
 
 	@Override
-	public void atualizar(Long id, Cliente cliente) {
-		// Buscar Cliente por ID, caso exista:
-		Optional<Cliente> clienteBd = clienteRepository.findById(id);
-		if (clienteBd.isPresent()) {
-			salvarClienteComCep(cliente);
-		}
+	public Cliente atualizar(Long id, UpdateClienteRequestDto cliente) {
+		Cliente retornaCliente = verificaExistencia(id);
+		Cliente atualizaCliente = retornaCliente.update(cliente.getNome(), cliente.getEndereco());
+		validarCliente(atualizaCliente);
+		return clienteRepository.save(atualizaCliente);
 	}
 
 	@Override
 	public void deletar(Long id) {
-		// Deletar Cliente por ID.
 		clienteRepository.deleteById(id);
 	}
 
-	private void salvarClienteComCep(Cliente cliente) {
-		// Verificar se o Endereco do Cliente já existe (pelo CEP).
+	private Cliente salvarClienteComCep(Cliente cliente) {
 		String cep = cliente.getEndereco().getCep();
 		Endereco endereco = enderecoRepository.findById(cep).orElseGet(() -> {
-			// Caso não exista, integrar com o ViaCEP e persistir o retorno.
 			Endereco novoEndereco = viaCepService.consultarCep(cep);
 			enderecoRepository.save(novoEndereco);
 			return novoEndereco;
 		});
-		cliente.setEndereco(endereco);
-		// Inserir Cliente, vinculando o Endereco (novo ou existente).
-		clienteRepository.save(cliente);
+		Cliente clienteComEnderecoAtualizado = cliente.atualizarEndereco(endereco);
+		return clienteRepository.save(clienteComEnderecoAtualizado);
+	}
+
+	public Cliente verificaExistencia(Long clienteId){
+		Optional<Cliente> cliente = clienteRepository.findById(clienteId);
+
+		if(cliente.isEmpty()){
+
+			throw new ExceptionMsg("Pessoa não encontrado");
+		}
+
+		return cliente.get();
+	}
+
+	private void validarCliente(Cliente cliente) {
+		validacoes.forEach(validacao -> validacao.validar(cliente));
 	}
 
 }
